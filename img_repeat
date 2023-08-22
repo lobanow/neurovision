@@ -1,0 +1,124 @@
+import multiprocessing
+import cv2
+import numpy as np
+import time
+
+def move_check(current_pos, side_size):
+    x, y = current_pos
+    move = []
+    if (x - 1 >= 0 and y - 1 > 0):
+        move.append((x - 1, y - 1))
+    if (y - 1 > 0):
+        move.append((x, y - 1))
+    if (x + 1 < side_size - 1 and y - 1 > 0):
+        move.append((x + 1, y - 1))
+    if (x + 1 < side_size - 1):
+        move.append((x + 1, y))
+    if (x + 1 < side_size - 1 and y + 1 < side_size):
+        move.append((x + 1, y + 1))
+    if (y + 1 < side_size):
+        move.append((x, y + 1))
+    if (x - 1 > 0 and y + 1 < side_size):
+        move.append((x - 1, y + 1))
+    if (x - 1 > 0):
+        move.append((x - 1, y))
+
+    return move
+
+def get_image_difference(image, image_sum, orig, orig_sum):
+    size = orig.shape[0]
+
+    difference = 0
+
+    norm = orig_sum / image_sum
+
+    for x in range(size):
+        for y in range(size):
+            image_cell = image[x][y]
+            target_cell = orig[x][y]
+
+            difference += max(0, target_cell - norm * image_cell)
+
+    return difference
+
+def dirr_stat(difference, image, current_sum, orig, orig_sum, pos):
+    x, y = pos
+
+    norm = orig_sum / current_sum
+    copy_point = image[x][y]
+    orig_point = orig[x][y]
+    priority = difference - max(0, orig_point - norm * copy_point) + max(
+        0, orig_point - norm * (copy_point + 1))
+
+    return priority
+
+def worker(orig, orig_sum, image, count, lock):
+    image = to_numpy_array(image, orig.shape)
+    size = orig.shape[0]
+    position = np.random.randint(0, size, size=2)
+    x, y = position
+
+    previous_difference = 0
+
+    with lock:
+        image[x][y] += 1
+
+    for i in range(int(count)):
+
+        image_sum = np.sum(image)
+        difference = get_image_difference(image, image_sum, orig, orig_sum)
+        while image[position[0]][position[1]] >= 255:
+            position = np.random.randint(0, size, size=2)
+
+        if (i % 500 == 0):
+            
+            if abs(difference - previous_difference) < orig_sum * 0.01:
+                position = np.random.randint(0, size, size=2)
+
+            previous_difference = difference
+
+        move_arr = move_check(position, size)
+
+        top_point = None
+        top_prior = None
+
+        for q in move_arr:
+            current_prior = dirr_stat(difference, image, image_sum, orig, orig_sum, q)
+
+            if (not top_prior or current_prior < top_prior):
+                top_prior = current_prior
+                top_point = q
+
+        position = top_point
+
+        with lock:
+            top_x, top_y = top_point
+            image[top_x][top_y] += 1
+
+if __name__ == '__main__':
+    start=time.perf_counter()
+    orig_image = cv2.imread('G:/paral/original.jpg', cv2.IMREAD_GRAYSCALE)
+    size = 100
+    orig_image = cv2.resize(orig_image, (size, size))
+    process_num=8
+    target_sum = np.sum(orig_image)
+    image = np.zeros(orig_image.shape, dtype=np.uint8)
+
+    lock = multiprocessing.Lock()
+    output_image = to_numpy_array(shared_image, image.shape)
+
+    count = 255 * orig_image.shape[0] * orig_image.shape[1] / 2
+
+    processes = []
+    for _ in range(process_num):
+        p = multiprocessing.Process(
+            target=worker, args=(orig_image, target_sum, shared_image, count/process_num, lock))
+        processes.append(p)
+        p.start()
+
+    for p in processes:
+        p.join()
+
+    cv2.imshow('image', output_image)
+    cv2.waitKey(0)
+    print(f'Finished in {round(time.perf_counter()-start)} second')
